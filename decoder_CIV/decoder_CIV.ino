@@ -1,59 +1,80 @@
 #include <LiquidCrystal_I2C.h>
+#include <RTClib.h>
 
-#define BAUD_RATE 19200     
-#define ICOM_ADDRESS (0x94)  
-#define CONTROL_ADDRESS (0x0E)
-#define COMMAND_MODE_POSITION 4 
-//#define DEBUG_INCOMIG_BYTE
-//#define DEBUG_FRAME_READ
-//#define DEBUG_PROCESS_FRAME
+#define BAUD_RATE 19200
+#define ICOM_ADDRESS 0x94
+#define CONTROL_ADDRESS 0x0E
 
-int byteCounter = 0;
-byte frequencyFrame [64];
-int megaHertz = 0;
-int kiloHertz = 0;
-int hertz = 0;
-int previousMegaHertz = 0;
-int previousKiloHertz = 0;
-int previousHertz = 0;
+const uint8_t pinHEX = 32;
+const uint8_t pinAPE = 34;
+
+uint8_t frequencyFrame [11];
+uint8_t byteCounter = 0;
+uint16_t frequency = 0;
+uint16_t previousFrequency = frequency;
 
 enum bands {
-    b0, b6, b10, b12, b15, b17, b20, b30, b40, b60, b80, b160
-};
-
-bands previousActiveBand = b0;
+  b0, b6, b10, b12, b15, b17, b20, b30, b40, b60, b80, b160
+  };
+enum antennas {
+  none, hexbeam, aperiodic
+  };
+  
+bands previousBand = b0;
+antennas previousAntenna = none;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+RTC_DS3231 rtc;
 
-//-------------------------------------DEBUG--------------------------------------------------------
-void debug_incomingByte (int pos, byte byte_frame) {
-  Serial.print ("Byte frame position = ");
-  Serial.print (pos);
-  Serial.print (" Byte HEX value --> ");
-  Serial.println (byte_frame, HEX);
+//----------------------------------- INTERNAL WATCH
+int dec_to_hex (int value) {
+  return ((value/10) *16) + (value % 10);
 }
 
-void debug_frame_read (int frameLenght) {
-  Serial.println ("---------------------- DEBUG_FRAME_READ ---------------------------");
-  for (int i=0; i<=frameLenght - 1; i++) {
-    Serial.print ("Byte pos = ");
-    Serial.print (i);
-    Serial.print (" Byte value --> ");
-    Serial.println (frequencyFrame [i], HEX);
-  }
+void set_date () {
+  DateTime dt_now = rtc.now();
+  int now_year = dt_now.year();
+  int now_month = dt_now.month();
+  int now_day = dt_now.day();
+ 
+  Serial1.flush();
+  Serial1.write(0xFE); 
+  Serial1.write(0xFE); 
+  Serial1.write(ICOM_ADDRESS); 
+  Serial1.write(CONTROL_ADDRESS);
+  Serial1.write(0x1A); 
+  Serial1.write(0x05);
+  Serial1.write(0x00);
+  Serial1.write(0x94);
+  Serial1.write(dec_to_hex(int(now_year/100)));
+  Serial1.write(dec_to_hex(now_year % 100));
+  Serial1.write(dec_to_hex(now_month));
+  Serial1.write(dec_to_hex(now_day));
+  Serial1.write(0xFD); 
+  delay(20); 
 }
 
-void debug_process_frame () {
-  Serial.println ("--------------------- DEBUG PROCESS_FRAME ------------------------");
-  Serial.print ("MegaHerzios = ");
-  Serial.println (megaHertz);
-  Serial.print ("KiloHertcios = ");
-  Serial.println (kiloHertz);
-  Serial.print ("Hertcios = ");
-  Serial.println (hertz);
+void set_hour () {
+  DateTime dt_now = rtc.now ();
+  int now_hour = dt_now.hour ();
+  int now_minute = dt_now.minute ();
+ 
+  Serial1.flush();
+  Serial1.write(0xFE); 
+  Serial1.write(0xFE); 
+  Serial1.write(ICOM_ADDRESS); 
+  Serial1.write(CONTROL_ADDRESS);
+  Serial1.write(0x1A); 
+  Serial1.write(0x05);
+  Serial1.write(0x00);
+  Serial1.write(0x95);
+  Serial1.write(dec_to_hex(now_hour));
+  Serial1.write(dec_to_hex(now_minute));
+  Serial1.write(0xFD); 
+  delay(20); 
 }
 
-//----------------------------------------------------------------------------------------------
+//------------------------------------ REQUEST 
 void request_frequency () {
   Serial1.flush();
   Serial1.write(0xFE); 
@@ -65,25 +86,33 @@ void request_frequency () {
   delay(20); 
 }
 
-void request_date () {
-  Serial1.flush();
-  Serial1.write(0xFE); 
-  Serial1.write(0xFE); 
-  Serial1.write(ICOM_ADDRESS); 
-  Serial1.write(CONTROL_ADDRESS);
-  Serial1.write(0x1A); 
-  Serial1.write(0x05);
-  Serial1.write(0x95);
-  Serial1.write (0x09);
-  Serial1.write (0x21); 
-  Serial1.write(0xFD); 
-  delay(20);  
+//-------------------------------------------- DECODER FUNCTIONS
+antennas select_antenna (bands b) {
+  if (b == b6 || b == b10 || b == b12 || b == b15 || b == b17 || b == b20) 
+    return hexbeam;
+  if (b == b30 || b == b40 || b == b60 || b == 80 || b == b160) 
+    return aperiodic;  
+}
+bands decode_band () {
+  if (frequency >=  1810 && frequency <=  2000) return b160;
+  if (frequency >=  3500 && frequency <=  3800) return b80;
+  if (frequency >=  5351 && frequency <=  5366) return b60;
+  if (frequency >=  7000 && frequency <=  7200) return b40;
+  if (frequency >= 10100 && frequency <= 10150) return b30;
+  if (frequency >= 14000 && frequency <= 14350) return b20;
+  if (frequency >= 18068 && frequency <= 18168) return b17;
+  if (frequency >= 21000 && frequency <= 21450) return b15;
+  if (frequency >= 24890 && frequency <= 24990) return b12;
+  if (frequency >= 28000 && frequency <= 29700) return b10;
+  if (frequency >= 50000 && frequency <= 52000) return b6;
+
+  return b0;
 }
 
-String bands_name (bands b) {
+String name_of_band (bands b) {
   switch (b) {
-    case  b0:   return "NULL";
-    case  b160: return "160m";
+    case b0:   return "NULL";
+    case b160: return "160m";
     case b80:  return "80m";
     case b60:  return "60m";
     case b40:  return "40m";
@@ -97,189 +126,120 @@ String bands_name (bands b) {
   }
 }
 
-bool process_frame (int frameLenght) {
-  int byteTo = 2;
-  int byteFrom = 3;
-  int byteCommand = 4;
-  int decimalValues[5];
-  int counter = 0;
-
-  //Filter conditions
-  if (frequencyFrame[byteTo] != 0x00 && frequencyFrame[byteTo] != 0x0E)
-    return false;
-
-  if (frequencyFrame[byteFrom] != 0x94)
-    return false;
-
-  if (frequencyFrame[byteCommand] != 0x00 && frequencyFrame[byteCommand] != 0x03)
-    return false;
-
-  for (int byteData = 9; byteData >= 5; byteData--) { 
-    decimalValues[counter] = 
-    (frequencyFrame[byteData]>>4)*10 +  //0x28 = 00101000 >> 0010 = 2*10 = 20
-    (frequencyFrame[byteData]&0x0F);    //0x28 = 00101000 (AND) 00001111 = 00001000 = 8 
-//    (frequencyFrame[byteData]%16);    //0x28 = 40 / 16 = 2; resto 8
-    counter++;
-  }
-
-  megaHertz = decimalValues[1];
-  kiloHertz = (decimalValues[2] * 10) + int (decimalValues[3] / 10);
-  hertz = ((decimalValues[3]%10)*100) + decimalValues[4]; 
-
-  #ifdef DEBUG_PROCESS_FRAME              
-    debug_process_frame ();
-  #endif //DEBUG_PROCESS_FRAME
-
-  return true;
+//-------------------------------------------- DISPLAY
+void show_frequency () {
+  lcd.setCursor (5, 0);
+  lcd.print("     ");
+  lcd.setCursor (5, 0);
+  lcd.print (frequency);
 }
 
-void display_kilo_hertz () {
-  int kiloPos = 3;
-  
-  lcd.setCursor (kiloPos, 0);
-  if (kiloHertz == 0) {
-    lcd.print ("000");
-  }
-  
-  if (kiloHertz >= 1 && kiloHertz < 10) {
-    lcd.print ("00");
-    lcd.print (kiloHertz);
-  }
-  
-  if (kiloHertz >= 10 && kiloHertz < 100) {
-    lcd.print ("0");
-    lcd.print (kiloHertz);
-  }
-  
-  if (kiloHertz >= 100) {
-    lcd.print (kiloHertz);  
-  }  
+void show_band (uint8_t band) {
+  lcd.setCursor (11, 0);
+  lcd.print ("    ");
+  lcd.setCursor (11, 0);
+  lcd.print (name_of_band (band));
 }
 
-void display_hertz () {
-  int hertzPos = 7;
-  
-  lcd.setCursor (hertzPos, 0);
-  if (hertz < 100) {
-    lcd.print ("0");
-    lcd.print (int(hertz/10));
-  }
-  if (hertz >= 100) {
-    lcd.print (int(hertz/10));
+void show_antenna (antennas a) {
+  lcd.setCursor (0, 1);
+  if (a == hexbeam)
+    lcd.print ("    HEXBEAM     ");
+  if (a == aperiodic)
+    lcd.print ("   APERIODIC    ");
+  if (a == none)
+    lcd.print ("      NONE      ");
+}
+
+//----------------------------------- FREQUENCY_FUNCTIONS
+void switch_antenna_relay (antennas a) {
+  switch (a) {
+    case none: 
+      digitalWrite (pinHEX, LOW);
+      digitalWrite (pinAPE, LOW);
+      break;
+    case hexbeam:
+      digitalWrite (pinHEX, HIGH);
+      digitalWrite (pinAPE, LOW);
+      break;
+    case aperiodic:
+      digitalWrite (pinHEX, LOW);
+      digitalWrite (pinAPE, HIGH);
+      break;
   }
 }
 
-void display_band (bands band) {
-  int colPos = 11;
-  if (band == b160)
-    colPos = 10;
-
-  if (band == b6)
-    colPos = 12;
-
-  lcd.setCursor (10, 0);
-  lcd.print ("       ");
-  lcd.setCursor(colPos, 0);
-  lcd.print ("B=");
-  lcd.print (bands_name(band)); 
+uint16_t hex_to_dec (uint8_t hexValue) {
+  return ((hexValue >> 4) * 10) + (hexValue & 0x0F);
 }
 
-void process_band () {
-  int megaPos = 0;
-  String kHertz = "000";
-  
-  if (megaHertz < 10)
-    megaPos = 1;
+void process_frequency () {
+  if (frequency != previousFrequency) {
+    previousFrequency = frequency;
+    show_frequency ();
     
-  lcd.clear ();
-  lcd.setCursor (megaPos, 0);
-  lcd.print (megaHertz);
-  lcd.print (".");
-  display_kilo_hertz ();
-  lcd.print (",");
-  display_hertz ();  
-}
-
-void frequency_changed () {
-  previousMegaHertz = megaHertz;
-  previousKiloHertz = kiloHertz;
-  previousHertz = hertz;  
-}
-
-bands decode_band () {
-  switch (megaHertz) {
-    case 1: return b160;
-    case 3: return b80;
-    case 5: return b60;
-    case 7: return b40;
-    case 10: return b30;
-    case 14: return b20;
-    case 18: return b17;
-    case 21: return b15;
-    case 24: return b12;
-    case 28: return b10;
-    case 50: return b6;
-
-    default: return b0;
-  }  
-}
-
-void process_change_of_frequency (bool mHz, bool kHz, bool Hz) {
-  if (mHz) {
-    process_band ();
     bands activeBand = decode_band ();
-    previousActiveBand = activeBand;
-    display_band (activeBand);
-    
-    //Process_relays (); --------------------- TO DO ---------------------------
-    frequency_changed ();
-    return;
+    if (activeBand != previousBand) {
+      previousBand = activeBand;
+      show_band (activeBand);
+      antennas activeAntenna = select_antenna (activeBand);
+      if (activeAntenna != previousAntenna) {
+        previousAntenna = activeAntenna;
+        show_antenna(activeAntenna);
+        switch_antenna_relay (activeAntenna);
+      }
+    } 
   }
-
-  if (kHz) 
-    display_kilo_hertz ();
-
-  if (Hz) 
-    display_hertz ();
-
-  frequency_changed ();
 }
-
-//---------------------------------------------------------------------------------------------
 
 void setup() { 
   Serial1.begin(BAUD_RATE);
   Serial.begin (9600);
+  Serial.flush ();
+  rtc.begin();
 
   lcd.init();
   lcd.backlight();
   lcd.clear();
 
-  request_frequency (); 
+  lcd.setCursor (0, 0);
+  lcd.print ("Dial:");
+
+  pinMode (pinHEX, OUTPUT);
+  pinMode (pinAPE, OUTPUT);
+  digitalWrite (pinHEX, LOW);
+  digitalWrite (pinAPE, LOW);
+
+//  set_hour ();
+//  set_date ();
+  
+  request_frequency ();
 }
 
-//---------------------------------------------------------------------------------------------
+void loop () {
+  uint8_t endByte = 0xFD;
+  uint8_t endPos = 10;
+  uint8_t data3Pos = 6; //KHz/10
+  uint8_t data2Pos = 7; //KHz*10
+  uint8_t data1Pos = 8; //MHz*1000 
 
-void loop() {
-  if (Serial1.available () > 0) {
-    byte incomingByte = Serial1.read ();
-    frequencyFrame[byteCounter] = incomingByte;
-
-    #ifdef DEBUG_INCOMIG_BYTE
-      debug_incomingByte (byteCounter, incomingByte);  
-    #endif //DEBUG
-
-    byteCounter++;
+  if (Serial1.available ()) {
+    int incomingByte = Serial1.read ();
     
-    if (incomingByte == 0xFD) {
-      bool processed = process_frame (byteCounter);
+    frequencyFrame [byteCounter] = incomingByte;
+    byteCounter++;
+
+    if (incomingByte == endByte) {
+      if (frequencyFrame [endPos] == endByte) {
+        for (uint8_t bytePos = data1Pos; bytePos >= data3Pos; bytePos--) {
+          if (bytePos == data1Pos) frequency+= hex_to_dec (frequencyFrame [bytePos]) * 1000;
+          if (bytePos == data2Pos) frequency+= hex_to_dec (frequencyFrame [bytePos]) * 10;
+          if (bytePos == data3Pos) frequency+= int (hex_to_dec (frequencyFrame [bytePos]) / 10);
+        }
+        process_frequency ();
+        frequency = 0;       
+      }
       byteCounter = 0;
-
-      bool changeMegaHertz = previousMegaHertz != megaHertz;
-      bool changeKiloHertz = previousKiloHertz != kiloHertz;
-      bool changeHertz = previousHertz != hertz;
-
-      process_change_of_frequency (changeMegaHertz, changeKiloHertz, changeHertz);
-    }
-  } 
+    }    
+  }
 }
