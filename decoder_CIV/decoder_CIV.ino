@@ -18,10 +18,18 @@ void setup () {
   lcd.init();
   lcd.backlight();
   lcd.clear(); 
+
+  request_frequency ();
+  DateTime dtNow = rtc.now ();
+//  set_date (dtNow);
+//  set_time (dtNow);
 }
 
-void loop () {
+void loop () {  
   if (Serial1.available ()) {
-    process_frequency ();
+    uint32_t frequency = process_frequency (); 
+    if (frequency != 0) {
+      Serial.println (frequency);
+    }
   }
 }
