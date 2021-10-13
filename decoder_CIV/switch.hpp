@@ -1,5 +1,3 @@
-#include "Arduino.h"
-
 //#define DEBUG_FRAME
 
 //--------------------------- byte frame value
@@ -31,17 +29,55 @@ const uint8_t DATA4pos = 8;
 const uint8_t DATA5pos = 9;
 const uint8_t EOFpos = 10;
 
+const uint8_t RELAY1pin = 32;
+const uint8_t RELAY2pin = 34;
+const uint8_t RELAY3pin = 36;
+const uint8_t RELAY4pin = 38;
+const uint8_t RELAY5pin = 40;
+const uint8_t RELAY6pin = 42;
+const uint8_t RELAY7pin = 44;
+const uint8_t RELAY8pin = 46;
+
 uint32_t PreviousKhertz = 0;
 uint8_t PreviousHertz = 0;
 uint8_t FrequencyFrame [11];
 uint8_t FramePos = 0;
 
+//-------------------------- enum variables
+enum bands {
+  b0, b6, b10, b12, b15, b17, b20, b30, b40, b60, b80, b160
+  };
+enum antennas {
+  none, hexbeam, aperiodic, ant3, ant4
+  };
+
+//------------------------------------- decoders
 uint8_t hex_to_dec (uint8_t hexValue) {
-  return ((hexValue >> 4) * 10) + (hexValue & 0x0F);//
+  return ((hexValue >> 4) * 10) + (hexValue & 0x0F);
 }
 
 uint8_t dec_to_hex (uint8_t value) {
   return ((value/10) *16) + (value % 10);
+}
+
+void init_relays_pins () {
+  pinMode (RELAY1pin, OUTPUT); 
+  pinMode (RELAY2pin, OUTPUT);
+  pinMode (RELAY3pin, OUTPUT);
+  pinMode (RELAY4pin, OUTPUT);
+  pinMode (RELAY5pin, OUTPUT);
+  pinMode (RELAY6pin, OUTPUT);
+  pinMode (RELAY7pin, OUTPUT);
+  pinMode (RELAY8pin, OUTPUT);
+
+  digitalWrite (RELAY1pin, LOW);
+  digitalWrite (RELAY2pin, LOW);
+  digitalWrite (RELAY3pin, LOW);
+  digitalWrite (RELAY4pin, LOW);
+  digitalWrite (RELAY5pin, LOW);
+  digitalWrite (RELAY6pin, LOW);
+  digitalWrite (RELAY7pin, LOW);
+  digitalWrite (RELAY8pin, LOW);
 }
 
 //------------------------------------ REQUEST 
@@ -107,6 +143,67 @@ void set_time (DateTime dtn) {
   delay(20); 
 }
 
+//-------------------------------------------- DECODER FUNCTIONS
+antennas select_antenna (bands band) {
+  switch (band) {
+    case b6: return ;
+    case b10: return hexbeam;
+    case b12: return hexbeam;
+    case b15: return hexbeam;
+    case b17: return hexbeam;
+    case b20: return hexbeam;
+    case b30: return aperiodic;
+    case b40: return aperiodic;
+    case b60: return aperiodic;
+    case b80: return ant3;
+    case b160: return ant4;
+    default: return none;
+  }
+}
+
+String name_of_antenna (antennas ant) {
+  switch (ant) {
+    case none:      return "NONE";
+    case hexbeam:   return "HEXBEAM";
+    case aperiodic: return "APERIODIC";
+    case ant3:      return "Antenna 3";
+    case ant4:      return "Antenna 4";
+  }
+}
+
+bands decode_band (uint32_t frq) {
+  if (frq >=  181000 && frq <=  200000) return b160;
+  if (frq >=  350000 && frq <=  380000) return b80;
+  if (frq >=  535100 && frq <=  536600) return b60;
+  if (frq >=  700000 && frq <=  720000) return b40;
+  if (frq >= 1010000 && frq <= 1015000) return b30;
+  if (frq >= 1400000 && frq <= 1435000) return b20;
+  if (frq >= 1806800 && frq <= 1816800) return b17;
+  if (frq >= 2100000 && frq <= 2145000) return b15;
+  if (frq >= 2489000 && frq <= 2499000) return b12;
+  if (frq >= 2800000 && frq <= 2970000) return b10;
+  if (frq >= 5000000 && frq <= 5200000) return b6;
+
+  return b0;
+}
+
+String name_of_band (bands b) {
+  switch (b) {
+    case b0:   return "NULL";
+    case b160: return "160m";
+    case b80:  return "80m";
+    case b60:  return "60m";
+    case b40:  return "40m";
+    case b30:  return "30m";
+    case b20:  return "20m";
+    case b17:  return "17m";
+    case b15:  return "15m";
+    case b12:  return "12m";
+    case b10:  return "10m";
+    case b6:   return "6m";
+  }
+}
+
 uint32_t decode_frequency () {
   uint32_t frq = 0;
 
@@ -120,8 +217,8 @@ uint32_t decode_frequency () {
     return 0;
 
   for (uint8_t bytePos = SOFpos; bytePos <= EOFpos; bytePos++) {
-    uint16_t hexValue = FrequencyFrame [bytePos];
-    uint16_t decValue = hex_to_dec (hexValue);
+    uint32_t hexValue = FrequencyFrame [bytePos];
+    uint32_t decValue = hex_to_dec (hexValue);
 
     #ifdef DEBUG_FRAME
       debug_frame (bytePos, hexValue, decValue);
@@ -149,7 +246,7 @@ uint32_t process_frequency () {
     FrequencyFrame [FramePos] = incomingByte;
     FramePos++;
     if (incomingByte == EOFrame){
-      FramePos = 0; 
+      FramePos = 0;
       return decode_frequency ();      
     }
   }
